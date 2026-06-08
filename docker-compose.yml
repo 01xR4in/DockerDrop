@@ -1,0 +1,58 @@
+services:
+  dockerdrop:
+    build: .
+    image: dockerdrop:latest
+    container_name: dockerdrop
+    restart: unless-stopped
+
+    # Proper PID 1: forwards signals and reaps zombies for a clean shutdown.
+    init: true
+
+    # --- Privilege hardening -------------------------------------------------
+    user: "10001:10001"            # never run as root
+    read_only: true                # immutable root filesystem
+    cap_drop:
+      - ALL                        # the app needs no Linux capabilities
+    security_opt:
+      - no-new-privileges:true     # block setuid/privilege escalation
+
+    # --- Filesystem ----------------------------------------------------------
+    volumes:
+      # The ONLY writable, host-visible location. Everything lives here.
+      - ./shared:/shared
+    tmpfs:
+      # Small scratch space; mounted noexec/nosuid so nothing can run from it.
+      - /tmp:rw,noexec,nosuid,size=16m
+
+    # --- Network -------------------------------------------------------------
+    ports:
+      # Reachable on your LAN at http://<host-ip>:8000/
+      - "8000:8000"
+      # To restrict to this machine only, comment the line above and use:
+      # - "127.0.0.1:8000:8000"
+    networks:
+      - dockerdrop_net
+
+    # --- Resource limits (denial-of-service containment) ---------------------
+    pids_limit: 100                # cap threads/processes
+    mem_limit: 128m
+    memswap_limit: 128m            # == mem_limit disables swap (needs swap accounting)
+    cpus: 0.5
+
+    # --- Health + logs -------------------------------------------------------
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8000/').read(); sys.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  dockerdrop_net:
+    driver: bridge
