@@ -40,7 +40,7 @@ cd dockerdrop
 # DockerDrop runs as UID 10001 and must be able to write into ./shared.
 # Run this once:
 sudo chown -R 10001:10001 shared     # preferred
-# chmod 666 shared                   # simpler, less strict
+# chmod 777 shared                   # simpler, less strict
 
 docker compose up -d --build
 ```
