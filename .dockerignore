@@ -1,0 +1,3 @@
+# Keep the build context tiny and never bake shared/host files into the image.
+*
+!upload_server.py
