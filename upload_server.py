@@ -19,6 +19,8 @@ import socketserver
 import os
 import sys
 import html
+import io
+import urllib.parse
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
 DIRECTORY = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else os.getcwd()
@@ -50,6 +52,68 @@ class UploadHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
             return
         super().do_GET()  # normal browse/download
+
+    def list_directory(self, path):
+        """Like the stdlib listing, but with an upload form at the top."""
+        try:
+            names = os.listdir(path)
+        except OSError:
+            self.send_error(403, "No permission to list directory")
+            return None
+        names.sort(key=lambda a: a.lower())
+
+        try:
+            displaypath = urllib.parse.unquote(self.path, errors="surrogatepass")
+        except UnicodeDecodeError:
+            displaypath = urllib.parse.unquote(self.path)
+        displaypath = html.escape(displaypath, quote=False)
+        enc = sys.getfilesystemencoding()
+        title = f"DockerDrop — {displaypath}"
+
+        r = [
+            "<!DOCTYPE html>",
+            '<html lang="en"><head>',
+            f'<meta charset="{enc}">',
+            '<meta name="viewport" content="width=device-width, initial-scale=1">',
+            f"<title>{title}</title>",
+            "<style>"
+            "body{font-family:sans-serif;max-width:48em;margin:2em auto;padding:0 1em}"
+            ".upload{margin:1em 0;padding:1em;border:1px solid #ccc;border-radius:8px;"
+            "background:#fafafa}"
+            "ul{line-height:1.7;padding-left:1.2em}"
+            "</style></head><body>",
+            f"<h1>{title}</h1>",
+            # --- upload form, shown right on the listing ---
+            '<form class="upload" method="POST" action="/upload" '
+            'enctype="multipart/form-data">'
+            '<input type="file" name="file" multiple> '
+            "<button type=\"submit\">Upload</button>"
+            "</form>",
+            "<hr><ul>",
+        ]
+        for name in names:
+            fullname = os.path.join(path, name)
+            displayname = linkname = name
+            if os.path.isdir(fullname):
+                displayname = linkname = name + "/"
+            if os.path.islink(fullname):
+                displayname = name + "@"
+            r.append(
+                '<li><a href="%s">%s</a></li>'
+                % (
+                    urllib.parse.quote(linkname, errors="surrogatepass"),
+                    html.escape(displayname, quote=False),
+                )
+            )
+        r.append("</ul></body></html>")
+
+        encoded = "\n".join(r).encode(enc, "surrogateescape")
+        f = io.BytesIO(encoded)
+        self.send_response(200)
+        self.send_header("Content-Type", f"text/html; charset={enc}")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        return f
 
     def do_POST(self):
         if self.path.rstrip("/") != "/upload":
@@ -95,17 +159,11 @@ class UploadHandler(http.server.SimpleHTTPRequestHandler):
                 f.write(file_bytes)
             saved.append(filename)
 
-        names = ", ".join(html.escape(n) for n in saved) or "(nothing)"
-        body = (
-            f"<p>Uploaded: {names}</p>"
-            f'<p><a href="/upload">upload more</a> | '
-            f'<a href="/">file list</a></p>'
-        ).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
+        # Back to the listing so the new file(s) show up right away.
+        self.send_response(303)
+        self.send_header("Location", "/")
+        self.send_header("Content-Length", "0")
         self.end_headers()
-        self.wfile.write(body)
 
 
 class Server(socketserver.ThreadingTCPServer):
